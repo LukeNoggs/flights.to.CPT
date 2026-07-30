@@ -27,6 +27,8 @@ import itertools
 from datetime import date, timedelta
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # ---------------------------------------------------------------------------
 # Config
@@ -57,6 +59,19 @@ HEADERS = {
 }
 
 STATE_FILE = os.environ.get("STATE_FILE", "last_price.json")
+
+# Duffel connections occasionally reset mid-handshake; retry a few times
+# with backoff before giving up on a given search.
+SESSION = requests.Session()
+_retry = Retry(
+    total=3,
+    connect=3,
+    read=3,
+    backoff_factor=1.5,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["POST"],
+)
+SESSION.mount("https://", HTTPAdapter(max_retries=_retry))
 
 
 def daterange(start: date, end: date):
@@ -105,12 +120,16 @@ def create_offer_request(origin: str, out_date: date, ret_date: date):
             "max_connections": MAX_CONNECTIONS,
         }
     }
-    resp = requests.post(
-        f"{DUFFEL_BASE}/air/offer_requests?return_offers=true&supplier_timeout=15000",
-        headers=HEADERS,
-        data=json.dumps(payload),
-        timeout=30,
-    )
+    try:
+        resp = SESSION.post(
+            f"{DUFFEL_BASE}/air/offer_requests?return_offers=true&supplier_timeout=15000",
+            headers=HEADERS,
+            data=json.dumps(payload),
+            timeout=30,
+        )
+    except requests.exceptions.RequestException as e:
+        print(f"  [warn] {origin} {out_date}->{ret_date}: request failed after retries: {e}")
+        return []
     if resp.status_code >= 400:
         print(f"  [warn] {origin} {out_date}->{ret_date}: {resp.status_code} {resp.text[:200]}")
         return []
