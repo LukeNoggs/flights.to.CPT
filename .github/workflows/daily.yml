@@ -1,0 +1,37 @@
+name: Daily flight check
+
+on:
+  schedule:
+    # 07:00 UTC daily (adjust to taste — this is ~08:00 UK winter time)
+    - cron: "0 7 * * *"
+  workflow_dispatch: {}  # lets you trigger it manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  check-flights:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Run search
+        env:
+          DUFFEL_API_KEY: ${{ secrets.DUFFEL_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python search_flights.py
+
+      - name: Commit price history
+        run: |
+          git config user.name "flights-to-cpt-bot"
+          git config user.email "actions@github.com"
+          git add last_price.json
+          git diff --staged --quiet || git commit -m "Update last known price [skip ci]"
+          git push
